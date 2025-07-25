@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Niki's Adventure</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: linear-gradient(to bottom, #87CEEB, #98FB98);
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+            touch-action: manipulation;
+        }
+
+        #gameContainer {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #gameCanvas {
+            background: linear-gradient(to bottom, #87CEEB 60%, #90EE90 60%);
+            display: block;
+            touch-action: none;
+        }
+
+        #controls {
+            position: absolute;
+            bottom: 20px;
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            padding: 0 20px;
+            z-index: 10;
+        }
+
+        .control-btn {
+            width: 80px;
+            height: 80px;
+            background: rgba(255, 255, 255, 0.8);
+            border: 3px solid #333;
+            border-radius: 50%;
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+        }
+
+        .control-btn:active {
+            transform: scale(0.95);
+            background: rgba(255, 255, 255, 0.6);
+        }
+
+        #score {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            font-size: 18px;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            z-index: 10;
+        }
+
+        #gameOver {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 30px;
+            border-radius: 15px;
+            text-align: center;
+            display: none;
+            z-index: 20;
+        }
+
+        #gameOver button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            font-size: 18px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 15px;
+        }
+
+        @media (orientation: landscape) {
+            #controls {
+                flex-direction: row;
+            }
+        }
+
+        @media (orientation: portrait) {
+            #controls {
+                flex-direction: row;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+        <div id="score">
+            Poop: <span id="poopCount">0</span> | 
+            Beer: <span id="beerCount">0</span> | 
+            Speed: <span id="speedLevel">1x</span>
+        </div>
+        <div id="controls">
+            <button class="control-btn" id="leftBtn">←</button>
+            <button class="control-btn" id="jumpBtn">Jump</button>
+            <button class="control-btn" id="rightBtn">→</button>
+        </div>
+        <div id="gameOver">
+            <h2>Game Complete!</h2>
+            <p>Niklas got his Chili con Carne!</p>
+            <p>💥 BOOM! 💥</p>
+            <button onclick="restartGame()">Play Again</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Set canvas size
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight - 100; // Leave space for controls
+        }
+        
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+
+        // Game variables
+        let gameState = 'playing'; // 'playing', 'complete'
+        let camera = { x: 0, y: 0 };
+        let worldWidth = canvas.width * 5; // Long runway
+        let gameTime = 0; // For animations
+        
+        // Player object
+        const player = {
+            x: 100,
+            y: canvas.height - 150,
+            width: 40,
+            height: 60,
+            velocityX: 0,
+            velocityY: 0,
+            speed: 5,
+            jumpPower: 15,
+            grounded: true,
+            color: '#8B4513'
+        };
+
+        // Game items
+        let poopItems = [];
+        let beerBottles = [];
+        let magicPotion = null;
+        let explosionParticles = [];
+
+        // Scores
+        let poopCount = 0;
+        let beerCount = 0;
+        let speedMultiplier = 1;
+
+        // Initialize game items
+        function initializeItems() {
+            // Poop items
+            poopItems = [];
+            for (let i = 0; i < 30; i++) {
+                poopItems.push({
+                    x: Math.random() * (worldWidth - 200) + 200,
+                    y: canvas.height - 120 - Math.random() * 100,
+                    width: 35,
+                    height: 30,
+                    collected: false
+                });
+            }
+
+            // Beer bottles
+            beerBottles = [];
+            for (let i = 0; i < 15; i++) {
+                beerBottles.push({
+                    x: Math.random() * (worldWidth - 200) + 200,
+                    y: canvas.height - 130 - Math.random() * 80,
+                    width: 30,
+                    height: 50,
+                    collected: false
+                });
+            }
+
+            // Magic potion at the end
+            magicPotion = {
+                x: worldWidth - 100,
+                y: canvas.height - 140,
+                width: 30,
+                height: 40,
+                collected: false,
+                label: "Niki's Chili"
+            };
+        }
+
+        // Input handling
+        const keys = {};
+        let touchLeft = false, touchRight = false, touchJump = false;
+
+        // Desktop controls
+        document.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+        });
+
+        document.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+        });
+
+        // Mobile controls
+        document.getElementById('leftBtn').addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            touchLeft = true;
+        });
+        
+        document.getElementById('leftBtn').addEventListener('touchend', (e) => {
+            e.preventDefault();
+            touchLeft = false;
+        });
+
+        document.getElementById('rightBtn').addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            touchRight = true;
+        });
+        
+        document.getElementById('rightBtn').addEventListener('touchend', (e) => {
+            e.preventDefault();
+            touchRight = false;
+        });
+
+        document.getElementById('jumpBtn').addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            touchJump = true;
+        });
+        
+        document.getElementById('jumpBtn').addEventListener('touchend', (e) => {
+            e.preventDefault();
+            touchJump = false;
+        });
+
+        // Update player
+        function updatePlayer() {
+            if (gameState !== 'playing') return;
+
+            // Horizontal movement
+            if (keys['ArrowLeft'] || keys['a'] || touchLeft) {
+                player.velocityX = -player.speed * speedMultiplier;
+            } else if (keys['ArrowRight'] || keys['d'] || touchRight) {
+                player.velocityX = player.speed * speedMultiplier;
+            } else {
+                player.velocityX *= 0.8; // Friction
+            }
+
+            // Jumping
+            if ((keys['ArrowUp'] || keys[' '] || touchJump) && player.grounded) {
+                player.velocityY = -player.jumpPower;
+                player.grounded = false;
+            }
+
+            // Apply gravity
+            player.velocityY += 0.8;
+
+            // Update position
+            player.x += player.velocityX;
+            player.y += player.velocityY;
+
+            // Ground collision
+            const groundY = canvas.height - 90;
+            if (player.y + player.height >= groundY) {
+                player.y = groundY - player.height;
+                player.velocityY = 0;
+                player.grounded = true;
+            }
+
+            // Keep player in bounds
+            if (player.x < 0) player.x = 0;
+            if (player.x > worldWidth - player.width) player.x = worldWidth - player.width;
+
+            // Update camera to follow player
+            camera.x = player.x - canvas.width / 3;
+            if (camera.x < 0) camera.x = 0;
+            if (camera.x > worldWidth - canvas.width) camera.x = worldWidth - canvas.width;
+        }
+
+        // Check collisions
+        function checkCollisions() {
+            if (gameState !== 'playing') return;
+
+            // Check poop collection
+            poopItems.forEach(poop => {
+                if (!poop.collected && 
+                    player.x < poop.x + poop.width &&
+                    player.x + player.width > poop.x &&
+                    player.y < poop.y + poop.height &&
+                    player.y + player.height > poop.y) {
+                    
+                    poop.collected = true;
+                    poopCount++;
+                    document.getElementById('poopCount').textContent = poopCount;
+                }
+            });
+
+            // Check beer collection
+            beerBottles.forEach(beer => {
+                if (!beer.collected && 
+                    player.x < beer.x + beer.width &&
+                    player.x + player.width > beer.x &&
+                    player.y < beer.y + beer.height &&
+                    player.y + player.height > beer.y) {
+                    
+                    beer.collected = true;
+                    beerCount++;
+                    speedMultiplier = 1 + (beerCount * 0.3);
+                    document.getElementById('beerCount').textContent = beerCount;
+                    document.getElementById('speedLevel').textContent = speedMultiplier.toFixed(1) + 'x';
+                }
+            });
+
+            // Check magic potion
+            if (magicPotion && !magicPotion.collected &&
+                player.x < magicPotion.x + magicPotion.width &&
+                player.x + player.width > magicPotion.x &&
+                player.y < magicPotion.y + magicPotion.height &&
+                player.y + player.height > magicPotion.y) {
+                
+                magicPotion.collected = true;
+                gameState = 'complete';
+                
+                // Create explosion
+                for (let i = 0; i < 20; i++) {
+                    explosionParticles.push({
+                        x: magicPotion.x + magicPotion.width / 2,
+                        y: magicPotion.y + magicPotion.height / 2,
+                        velocityX: (Math.random() - 0.5) * 10,
+                        velocityY: (Math.random() - 0.5) * 10,
+                        life: 60,
+                        maxLife: 60
+                    });
+                }
+                
+                setTimeout(() => {
+                    document.getElementById('gameOver').style.display = 'block';
+                }, 1000);
+            }
+        }
+
+        // Update explosion particles
+        function updateExplosion() {
+            explosionParticles = explosionParticles.filter(particle => {
+                particle.x += particle.velocityX;
+                particle.y += particle.velocityY;
+                particle.velocityY += 0.3; // Gravity
+                particle.life--;
+                return particle.life > 0;
+            });
+        }
+
+        // Draw functions
+        function drawPlayer() {
+            const screenX = player.x - camera.x;
+            const screenY = player.y;
+
+            // Draw simple male figure
+            ctx.fillStyle = '#FFE4C4'; // Skin color
+            ctx.fillRect(screenX + 15, screenY, 10, 15); // Head
+            
+            ctx.fillStyle = '#FF0000'; // Red shirt
+            ctx.fillRect(screenX + 10, screenY + 15, 20, 25); // Body
+            
+            ctx.fillStyle = '#0000FF'; // Blue pants
+            ctx.fillRect(screenX + 12, screenY + 40, 16, 20); // Legs
+            
+            // Simple face
+            ctx.fillStyle = '#000';
+            ctx.fillRect(screenX + 17, screenY + 4, 2, 2); // Eye
+            ctx.fillRect(screenX + 21, screenY + 4, 2, 2); // Eye
+            ctx.fillRect(screenX + 18, screenY + 8, 4, 1); // Mouth
+        }
+
+        function drawItems() {
+            // Draw poop items
+            poopItems.forEach(poop => {
+                if (!poop.collected) {
+                    const screenX = poop.x - camera.x;
+                    // Just draw the emoji larger, no brown background
+                    ctx.font = '24px Arial';
+                    ctx.fillText('💩', screenX + 5, poop.y + 20);
+                }
+            });
+
+            // Draw beer bottles
+            beerBottles.forEach(beer => {
+                if (!beer.collected) {
+                    const screenX = beer.x - camera.x;
+                    ctx.fillStyle = '#8B4513'; // Brown bottle
+                    ctx.fillRect(screenX, beer.y, beer.width, beer.height);
+                    ctx.fillStyle = '#FFD700'; // Gold label
+                    ctx.fillRect(screenX + 3, beer.y + 15, beer.width - 6, 20);
+                    ctx.font = '18px Arial';
+                    ctx.fillText('🍺', screenX + 6, beer.y + 30);
+                }
+            });
+
+            // Draw magic potion with pulsating effect
+            if (magicPotion && !magicPotion.collected) {
+                const screenX = magicPotion.x - camera.x;
+                
+                // Pulsating effect
+                const pulsate = Math.sin(gameTime * 0.1) * 0.2 + 1; // Oscillates between 0.8 and 1.2
+                const pulseWidth = magicPotion.width * pulsate;
+                const pulseHeight = magicPotion.height * pulsate;
+                const offsetX = (pulseWidth - magicPotion.width) / 2;
+                const offsetY = (pulseHeight - magicPotion.height) / 2;
+                
+                ctx.fillStyle = '#800080'; // Purple potion
+                ctx.fillRect(screenX - offsetX, magicPotion.y - offsetY, pulseWidth, pulseHeight);
+                ctx.fillStyle = '#FFD700'; // Gold top
+                ctx.fillRect(screenX + 5 - offsetX, magicPotion.y - 5 - offsetY, 20 * pulsate, 8 * pulsate);
+                
+                // Clear label with background
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                ctx.fillRect(screenX - 15, magicPotion.y - 25, 60, 16);
+                
+                // Label
+                ctx.fillStyle = '#FFF';
+                ctx.font = 'bold 12px Arial';
+                ctx.fillText("Niki's Chili", screenX - 12, magicPotion.y - 12);
+            }
+        }
+
+        function drawExplosion() {
+            explosionParticles.forEach(particle => {
+                const screenX = particle.x - camera.x;
+                const alpha = particle.life / particle.maxLife;
+                ctx.fillStyle = `rgba(255, ${Math.floor(255 * alpha)}, 0, ${alpha})`;
+                ctx.fillRect(screenX, particle.y, 6, 6);
+            });
+        }
+
+        function drawGround() {
+            ctx.fillStyle = '#228B22';
+            ctx.fillRect(0, canvas.height - 90, canvas.width, 90);
+            
+            // Draw some grass details
+            ctx.fillStyle = '#32CD32';
+            for (let i = 0; i < canvas.width; i += 20) {
+                ctx.fillRect(i, canvas.height - 95, 3, 10);
+                ctx.fillRect(i + 5, canvas.height - 92, 2, 7);
+                ctx.fillRect(i + 10, canvas.height - 97, 4, 12);
+            }
+        }
+
+        // Main game loop
+        function gameLoop() {
+            gameTime++; // Increment for animations
+            
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw background
+            const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            gradient.addColorStop(0, '#87CEEB');
+            gradient.addColorStop(0.6, '#98FB98');
+            gradient.addColorStop(1, '#90EE90');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Update game
+            updatePlayer();
+            checkCollisions();
+            updateExplosion();
+
+            // Draw everything
+            drawGround();
+            drawItems();
+            drawPlayer();
+            drawExplosion();
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Restart game function
+        function restartGame() {
+            gameState = 'playing';
+            player.x = 100;
+            player.y = canvas.height - 150;
+            player.velocityX = 0;
+            player.velocityY = 0;
+            camera.x = 0;
+            gameTime = 0;
+            poopCount = 0;
+            beerCount = 0;
+            speedMultiplier = 1;
+            explosionParticles = [];
+            
+            document.getElementById('poopCount').textContent = '0';
+            document.getElementById('beerCount').textContent = '0';
+            document.getElementById('speedLevel').textContent = '1x';
+            document.getElementById('gameOver').style.display = 'none';
+            
+            initializeItems();
+        }
+
+        // Start the game
+        initializeItems();
+        gameLoop();
+
+        // Prevent scrolling on mobile
+        document.addEventListener('touchmove', function(e) {
+            e.preventDefault();
+        }, { passive: false });
+
+    </script>
+</body>
+</html> 
